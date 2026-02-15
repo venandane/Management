@@ -1,0 +1,32 @@
+# strategies:
+#   - name: "SMA_CROSSOVER"
+#     symbols: ["EUR_USD", "GBP_USD"]
+#     #timeframes: ["M5", "M15"]  # Strategy uses 5-min and 15-min
+#     timeframes: ["H1"]  # Strategy uses 5-min and 15-min
+#     params:
+#       fast_period: 9
+#       slow_period: 21
+
+strategies:
+  - name: "STRONG_CANDLE"
+    symbols: ["EUR_USD"]
+    timeframes: ["H1"]  # Works on any timeframe
+    params:
+      min_body_pips: 5.0       # Minimum body size
+      min_range_pips: 3.0      # Minimum total range
+      signal_mode: "immediate" # or "confirmation"
+
+  - name: "BREAKOUT_ON_STRONG_CANDLE"
+    symbols: ["EUR_USD"]
+    timeframes: ["M1", "H1"]  # Must include both lower and higher timeframes
+    params:
+      higher_timeframe: "H1"
+      lower_timeframe: "M1"
+      min_body_pips: 5.0
+      min_range_pips: 3.0
+      buffer_pips: 0.5  # Extra pips above high to avoid false breaks
+      signal_mode: "immediate"
+
+plotting:
+  theme: "dark"
+  show_strong_candles: true  # Enable strong candle markers

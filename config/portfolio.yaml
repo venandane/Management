@@ -1,0 +1,22 @@
+portfolio:
+  accounts:
+    - account_id: "ACC-USD-001"
+      account_name: "Primary USD Account"
+      base_currency: "USD"
+      initial_balance: 100000.00
+      purpose: "Main trading account for buying FX pairs"
+    
+    - account_id: "ACC-EUR-001"
+      account_name: "EUR Hedge Account"
+      base_currency: "EUR"
+      initial_balance: 50000.00
+      purpose: "Hedge base currency exposure from USD account buys"
+  
+  logging:
+    directory: "data/portfolio_logs"
+    state_file: "portfolio_state.json"
+    enable_hash_chain: false  # For tamper-evident logging (requires crypto lib)
+  
+  risk_management:
+    max_position_size_pct: 5.0  # Max 5% of account per position
+    max_drawdown_pct: 10.0      # Hard stop at 10% account drawdown

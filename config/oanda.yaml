@@ -1,0 +1,16 @@
+oanda:
+  environment: "practice"  # or "live"
+  account_id: ""  # Your OANDA account ID
+  api_token: ""   # Get from https://www.oanda.com/account/tpa/personal_token
+  
+data_collection:
+  instruments:
+    - "EUR_USD"
+    - "GBP_USD"
+    - "USD_JPY"
+    - "AUD_USD"
+  granularity: "M1"  # 1-minute candles
+  lookback_days: 365  # 1 year
+  output_path: "data/raw/oanda"
+  batch_size: 4900    # Stay under 5000 limit with buffer
+  rate_limit_delay: 0.1  # Seconds between requests (OANDA allows ~100 req/sec)
