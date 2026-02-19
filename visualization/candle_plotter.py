@@ -690,7 +690,7 @@ class CandlePlotter:
         )
         fig.update_yaxes(title_text="Volume", row=row, col=col)
 
-    def _add_signal_markers(self, fig, signals: pd.DataFrame, row: int, col: int):
+    def _add_signal_markers_old(self, fig, signals: pd.DataFrame, row: int, col: int):
         """Add entry/exit markers for backtest visualization (signals already timezone-converted)."""
         if signals.empty:
             return
@@ -737,6 +737,538 @@ class CandlePlotter:
                 row=row, col=col
             )
 
+
+    def _add_signal_markers(self, fig, signals: pd.DataFrame, row: int, col: int):
+        """Add direction-aware signal markers (blue ▲ for buys, red ▼ for sells)."""
+        if signals.empty:
+            return
+        
+        # Get pip size for vertical offset
+        # Infer instrument from figure data (hacky but works for single-instrument plots)
+        instrument = "EUR_USD"  # Default fallback
+        for trace in fig.data:
+            if hasattr(trace, 'name') and 'EUR' in str(trace.name):
+                instrument = "EUR_USD"
+                break
+        
+        pip_size = get_pip_size(instrument)
+        y_offset = 3.0 * pip_size
+        
+        # BUY signals (direction > 0)
+        buy_signals = signals[signals['direction'] > 0]
+        if not buy_signals.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=buy_signals.index,
+                    y=buy_signals['price'] + y_offset,
+                    mode='markers',
+                    name='BUY Signal',
+                    marker=dict(
+                        symbol='triangle-up',
+                        size=16,
+                        color='blue',
+                        line=dict(width=2, color='white')
+                    ),
+                    hovertemplate=(
+                        '<b>BUY Signal</b><br>'
+                        'Time: %{x}<br>'
+                        'Price: %{y:.5f}<br>'
+                        'Body: %{customdata[0]:.1f} pips<br>'
+                        'Type: %{customdata[1]}<extra></extra>'
+                    ),
+                    customdata=np.column_stack([
+                        buy_signals.get('body_pips', pd.Series(0, index=buy_signals.index)).values,
+                        buy_signals.get('candle_direction', pd.Series('bull', index=buy_signals.index)).values
+                    ])
+                ),
+                row=row, col=col
+            )
+        
+        # SELL signals (direction < 0)
+        sell_signals = signals[signals['direction'] < 0]
+        if not sell_signals.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=sell_signals.index,
+                    y=sell_signals['price'] - y_offset,
+                    mode='markers',
+                    name='SELL Signal',
+                    marker=dict(
+                        symbol='triangle-down',
+                        size=16,
+                        color='red',
+                        line=dict(width=2, color='white')
+                    ),
+                    hovertemplate=(
+                        '<b>SELL Signal</b><br>'
+                        'Time: %{x}<br>'
+                        'Price: %{y:.5f}<br>'
+                        'Body: %{customdata[0]:.1f} pips<br>'
+                        'Type: %{customdata[1]}<extra></extra>'
+                    ),
+                    customdata=np.column_stack([
+                        sell_signals.get('body_pips', pd.Series(0, index=sell_signals.index)).values,
+                        sell_signals.get('candle_direction', pd.Series('bear', index=sell_signals.index)).values
+                    ])
+                ),
+                row=row, col=col
+            )
+
+    def plot_strong_candle_refined(
+        self,
+        instrument: str,
+        candles: pd.DataFrame,
+        all_signals: pd.DataFrame,
+        filtered_signals: pd.DataFrame,
+        bad_signals: Optional[pd.DataFrame] = None,
+        title_suffix: str = "",
+        show_volume: bool = True,
+        width: int = 3600,
+        height: int = 1900
+    ) -> go.Figure:
+        """
+        Plot refined strong candle strategy with bad signal markers.
+        
+        Visual elements:
+        - Green ▲ / Red ▼ arrows: Strong candles
+        - Small triangles: Raw signals rejected by bad signal filter
+        - Large triangles with border: Filtered signals accepted by strategy
+        - Red 'x': Bad SELL signals (price rose 12+ pips after signal)
+        - Blue 'x': Bad BUY signals (price fell 12+ pips after signal)
+        """
+
+        
+        # Convert to display timezone
+        candles_display = self._prepare_display_df(candles)
+        all_signals_display = self._prepare_display_signals(all_signals) if not all_signals.empty else pd.DataFrame()
+        filtered_signals_display = self._prepare_display_signals(filtered_signals) if not filtered_signals.empty else pd.DataFrame()
+        bad_signals_display = self._prepare_display_signals(bad_signals) if bad_signals is not None and not bad_signals.empty else None
+        
+        # Create subplot with volume
+        fig = make_subplots(
+            rows=2,
+            cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.03,
+            row_heights=[0.75, 0.25],
+            subplot_titles=[
+                f"{instrument} - {candles.attrs.get('timeframe', 'H1')} (Refined Signals)",
+                "Volume"
+            ]
+        )
+        
+        # Main candlestick chart
+        self._add_candlestick_trace(
+            fig, candles_display, row=1, col=1,
+            indicators={},
+            instrument=instrument
+        )
+        
+        # Add bad signal markers ('x' at candle low/high)
+        if bad_signals_display is not None and not bad_signals_display.empty:
+            pip_size = get_pip_size(instrument)
+            y_offset = 2.0 * pip_size
+            
+            # Red 'x' for bad SELL signals (at candle low)
+            bad_sells = bad_signals_display[bad_signals_display['direction'] < 0]
+            if not bad_sells.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=bad_sells.index,
+                        y=bad_sells['price'] - y_offset,
+                        mode='markers+text',
+                        name='Bad SELL',
+                        marker=dict(symbol='x', size=16, color='red', line=dict(width=2, color='darkred')),
+                        text=['✗'] * len(bad_sells),
+                        textposition='bottom center',
+                        textfont=dict(size=20, color='red'),
+                        hovertemplate=(
+                            '<b>Bad SELL Signal</b><br>'
+                            'Time: %{x}<br>'
+                            'Invalidated by: %{customdata}<extra></extra>'
+                        ),
+                        customdata=bad_sells['reason'].values
+                    ),
+                    row=1, col=1
+                )
+            
+            # Blue 'x' for bad BUY signals (at candle high)
+            bad_buys = bad_signals_display[bad_signals_display['direction'] > 0]
+            if not bad_buys.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=bad_buys.index,
+                        y=bad_buys['price'] + y_offset,
+                        mode='markers+text',
+                        name='Bad BUY',
+                        marker=dict(symbol='x', size=16, color='blue', line=dict(width=2, color='darkblue')),
+                        text=['✗'] * len(bad_buys),
+                        textposition='top center',
+                        textfont=dict(size=20, color='blue'),
+                        hovertemplate=(
+                            '<b>Bad BUY Signal</b><br>'
+                            'Time: %{x}<br>'
+                            'Invalidated by: %{customdata}<extra></extra>'
+                        ),
+                        customdata=bad_buys['reason'].values
+                    ),
+                    row=1, col=1
+                )
+        
+        # Add raw signals (rejected by filter) - small triangles
+        if not all_signals_display.empty:
+            pip_size = get_pip_size(instrument)
+            y_offset = 3.0 * pip_size
+            
+            # Identify rejected signals (in all_signals but not in filtered_signals)
+            rejected_buys = all_signals_display[
+                (all_signals_display['direction'] > 0) & 
+                (~all_signals_display.index.isin(filtered_signals_display.index))
+            ]
+            rejected_sells = all_signals_display[
+                (all_signals_display['direction'] < 0) & 
+                (~all_signals_display.index.isin(filtered_signals_display.index))
+            ]
+            
+            # Small blue triangles for rejected buys
+            if not rejected_buys.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=rejected_buys.index,
+                        y=rejected_buys['price'] + y_offset,
+                        mode='markers',
+                        name='Rejected BUY',
+                        marker=dict(symbol='triangle-up', size=10, color='lightblue', opacity=0.7),
+                        hovertemplate=(
+                            '<b>Rejected BUY</b><br>'
+                            'Time: %{x}<br>'
+                            'Price: %{y:.5f}<br>'
+                            'Body: %{customdata[0]:.1f} pips<extra></extra>'
+                        ),
+                        customdata=np.column_stack([
+                            rejected_buys['body_pips'].values
+                        ])
+                    ),
+                    row=1, col=1
+                )
+            
+            # Small red triangles for rejected sells
+            if not rejected_sells.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=rejected_sells.index,
+                        y=rejected_sells['price'] - y_offset,
+                        mode='markers',
+                        name='Rejected SELL',
+                        marker=dict(symbol='triangle-down', size=10, color='lightcoral', opacity=0.7),
+                        hovertemplate=(
+                            '<b>Rejected SELL</b><br>'
+                            'Time: %{x}<br>'
+                            'Price: %{y:.5f}<br>'
+                            'Body: %{customdata[0]:.1f} pips<extra></extra>'
+                        ),
+                        customdata=np.column_stack([
+                            rejected_sells['body_pips'].values
+                        ])
+                    ),
+                    row=1, col=1
+                )
+        
+        # Add filtered signals (accepted) - large triangles with border
+        if not filtered_signals_display.empty:
+            pip_size = get_pip_size(instrument)
+            y_offset = 3.0 * pip_size
+            
+            # Large blue triangles with white border for accepted buys
+            accepted_buys = filtered_signals_display[filtered_signals_display['direction'] > 0]
+            if not accepted_buys.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=accepted_buys.index,
+                        y=accepted_buys['price'] + y_offset,
+                        mode='markers',
+                        name='Accepted BUY',
+                        marker=dict(
+                            symbol='triangle-up',
+                            size=18,
+                            color='blue',
+                            line=dict(width=2.5, color='white')
+                        ),
+                        hovertemplate=(
+                            '<b>Accepted BUY</b><br>'
+                            'Time: %{x}<br>'
+                            'Price: %{y:.5f}<br>'
+                            'Body: %{customdata[0]:.1f} pips<extra></extra>'
+                        ),
+                        customdata=np.column_stack([
+                            accepted_buys['body_pips'].values
+                        ])
+                    ),
+                    row=1, col=1
+                )
+            
+            # Large red triangles with white border for accepted sells
+            accepted_sells = filtered_signals_display[filtered_signals_display['direction'] < 0]
+            if not accepted_sells.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=accepted_sells.index,
+                        y=accepted_sells['price'] - y_offset,
+                        mode='markers',
+                        name='Accepted SELL',
+                        marker=dict(
+                            symbol='triangle-down',
+                            size=18,
+                            color='red',
+                            line=dict(width=2.5, color='white')
+                        ),
+                        hovertemplate=(
+                            '<b>Accepted SELL</b><br>'
+                            'Time: %{x}<br>'
+                            'Price: %{y:.5f}<br>'
+                            'Body: %{customdata[0]:.1f} pips<extra></extra>'
+                        ),
+                        customdata=np.column_stack([
+                            accepted_sells['body_pips'].values
+                        ])
+                    ),
+                    row=1, col=1
+                )
+        
+        # Volume subplot
+        if show_volume:
+            self._add_volume_trace(fig, candles_display, row=2, col=1)
+        
+        # Layout
+        tz_label = f" ({self.display_timezone})" if self.display_timezone != "UTC" else ""
+        fig.update_layout(
+            title=f"{instrument} Refined Strong Candle Strategy{tz_label} {title_suffix}",
+            height=height,
+            width=width,
+            template="plotly_white" if self.theme == "light" else "plotly_dark",
+            hovermode="x unified",
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            plot_bgcolor=self.color_scheme["bg"],
+            paper_bgcolor=self.color_scheme["bg"],
+            font=dict(color=self.color_scheme["text"]),
+            margin=dict(t=80, b=60, l=60, r=60)
+        )
+        
+        # Grid lines
+        for i in range(1, 3):
+            fig.update_xaxes(
+                showgrid=True,
+                gridwidth=1,
+                gridcolor=self.color_scheme["grid"],
+                title_text=f"Time{tz_label}" if i == 2 else None,
+                row=i,
+                col=1,
+                rangeslider_visible=False
+            )
+            fig.update_yaxes(
+                showgrid=True,
+                gridwidth=1,
+                gridcolor=self.color_scheme["grid"],
+                row=i,
+                col=1
+            )
+        
+        return fig
+
+
+
+    def plot_strong_candle_refined_v2(
+        self,
+        instrument: str,
+        candles: pd.DataFrame,
+        all_strong_candles: pd.DataFrame,
+        accepted_signals: pd.DataFrame,
+        bad_signals: Optional[pd.DataFrame] = None,
+        title_suffix: str = "",
+        width: int = 3600,
+        height: int = 1900
+    ) -> go.Figure:
+        """
+        V2: Implements EXACT visual representation of specification logic.
+        
+        Visual markers:
+        - ✗ Red 'x' at candle LOW = Bad SELL signal (reference level for filtering)
+        - ✗ Blue 'x' at candle HIGH = Bad BUY signal (reference level for filtering)
+        - Large red ▼ = ACCEPTED SELL signal (passed filter: current_close < L_bad OR > L_bad+12pips)
+        - Large blue ▲ = ACCEPTED BUY signal (passed filter)
+        - Small gray markers = Strong candles that were REJECTED by filter (not plotted by default)
+        """
+
+        # Convert to display timezone
+        candles_display = self._prepare_display_df(candles)
+        accepted_display = self._prepare_display_signals(accepted_signals) if not accepted_signals.empty else pd.DataFrame()
+        bad_display = self._prepare_display_signals(bad_signals) if bad_signals is not None and not bad_signals.empty else None
+        
+        # Create subplot
+        fig = make_subplots(
+            rows=1,
+            cols=1,
+            subplot_titles=[f"{instrument} - {candles.attrs.get('timeframe', 'H1')} (Exact Filter Logic)"]
+        )
+        
+        # Main candlestick chart
+        self._add_candlestick_trace(
+            fig, candles_display, row=1, col=1,
+            indicators={},
+            instrument=instrument
+        )
+        
+        # Add BAD SIGNAL markers ('x' at reference levels)
+        if bad_display is not None and not bad_display.empty:
+            pip_size = get_pip_size(instrument)
+            y_offset = 2.0 * pip_size
+            
+            # Red 'x' at CANDLE LOW for bad SELL signals (reference level L_bad)
+            bad_sells = bad_display[bad_display['direction'] < 0]
+            if not bad_sells.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=bad_sells.index,
+                        y=bad_sells['price'] - y_offset,
+                        mode='markers',
+                        name='Bad SELL Reference',
+                        marker=dict(symbol='x', size=18, color='red', line=dict(width=2.5, color='darkred')),
+                        text=['✗'] * len(bad_sells),
+                        textposition='bottom center',
+                        textfont=dict(size=24, color='red'),
+                        hovertemplate=(
+                            '<b>Bad SELL Reference Level</b><br>'
+                            'Time: %{x}<br>'
+                            'Candle Low (L_bad): %{y:.5f}<br>'
+                            '<span style="color:gray">Used for filtering new SELL signals</span><extra></extra>'
+                        )
+                    ),
+                    row=1, col=1
+                )
+            
+            # Blue 'x' at CANDLE HIGH for bad BUY signals (reference level H_bad)
+            bad_buys = bad_display[bad_display['direction'] > 0]
+            if not bad_buys.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=bad_buys.index,
+                        y=bad_buys['price'] + y_offset,
+                        mode='markers',
+                        name='Bad BUY Reference',
+                        marker=dict(symbol='x', size=18, color='blue', line=dict(width=2.5, color='darkblue')),
+                        text=['✗'] * len(bad_buys),
+                        textposition='top center',
+                        textfont=dict(size=24, color='blue'),
+                        hovertemplate=(
+                            '<b>Bad BUY Reference Level</b><br>'
+                            'Time: %{x}<br>'
+                            'Candle High (H_bad): %{y:.5f}<br>'
+                            '<span style="color:gray">Used for filtering new BUY signals</span><extra></extra>'
+                        )
+                    ),
+                    row=1, col=1
+                )
+
+
+
+        # Add ACCEPTED SIGNALS (large triangles with border)
+        if not accepted_display.empty:
+            pip_size = get_pip_size(instrument)
+            y_offset = 3.5 * pip_size
+            
+            # Large blue triangles for accepted BUYs
+            accepted_buys = accepted_display[accepted_display['direction'] > 0]
+            if not accepted_buys.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=accepted_buys.index,
+                        y=accepted_buys['price'] + y_offset,
+                        mode='markers',
+                        name='Accepted BUY',
+                        marker=dict(
+                            symbol='triangle-up',
+                            size=20,
+                            color='cyan',
+                            line=dict(width=3, color='black')
+                        ),
+                        hovertemplate=(
+                            '<b>ACCEPTED BUY</b><br>'
+                            'Time: %{x}<br>'
+                            'Price: %{y:.5f}<br>'
+                            'Body: %{customdata[0]:.1f} pips<br>'
+                            '<span style="color:green">Passed bad signal filter</span><extra></extra>'
+                        ),
+                        customdata=np.column_stack([accepted_buys['body_pips'].values])
+                    ),
+                    row=1, col=1
+                )
+
+
+            # Large red triangles for accepted SELLs
+            accepted_sells = accepted_display[accepted_display['direction'] < 0]
+            if not accepted_sells.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=accepted_sells.index,
+                        y=accepted_sells['price'] - y_offset,
+                        mode='markers',
+                        name='Accepted SELL',
+                        marker=dict(
+                            symbol='triangle-down',
+                            size=20,
+                            color='yellow',
+                            line=dict(width=3, color='black')
+                        ),
+                        hovertemplate=(
+                            '<b>ACCEPTED SELL</b><br>'
+                            'Time: %{x}<br>'
+                            'Price: %{y:.5f}<br>'
+                            'Body: %{customdata[0]:.1f} pips<br>'
+                            '<span style="color:green">Passed bad signal filter</span><extra></extra>'
+                        ),
+                        customdata=np.column_stack([accepted_sells['body_pips'].values])
+                    ),
+                    row=1, col=1
+                )
+        
+        
+        # Layout
+        tz_label = f" ({self.display_timezone})" if self.display_timezone != "UTC" else ""
+        fig.update_layout(
+            title=f"{instrument} Refined Strategy V2{tz_label} {title_suffix}",
+            height=height,
+            width=width,
+            template="plotly_white" if self.theme == "light" else "plotly_dark",
+            hovermode="x unified",
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            plot_bgcolor=self.color_scheme["bg"],
+            paper_bgcolor=self.color_scheme["bg"],
+            font=dict(color=self.color_scheme["text"]),
+            margin=dict(t=80, b=60, l=60, r=60)
+        )
+        
+        # Grid lines
+        fig.update_xaxes(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor=self.color_scheme["grid"],
+            title_text=f"Time{tz_label}",
+            rangeslider_visible=False,
+            row=1, col=1
+        )
+        fig.update_yaxes(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor=self.color_scheme["grid"],
+            row=1, col=1
+        )
+        
+        return fig
+
+
+
     def save_html(self, fig: go.Figure, filepath: str):
         """Save interactive plot to HTML file."""
         fig.write_html(
@@ -746,3 +1278,276 @@ class CandlePlotter:
             config={'scrollZoom': True, 'displayModeBar': True}
         )
         print(f"Saved interactive chart to: {filepath}")
+
+
+
+    def plot_strong_candle_refined_v3(
+        self,
+        instrument: str,
+        candles: pd.DataFrame,
+        accepted_signals: pd.DataFrame,
+        rejected_signals: pd.DataFrame,
+        bad_signals: Optional[pd.DataFrame] = None,
+        title_suffix: str = "",
+        width: int = 3600,
+        height: int = 1900
+    ) -> go.Figure:
+        """
+        V3: Adds markers for REJECTED strong candles (failed filter test).
+        
+        Visual hierarchy:
+        1. Candlestick chart (OHLC)
+        2. Strong candle arrows (green ▲ / red ▼) - auto from candles DataFrame
+        3. Bad reference markers (red/blue ✗) - at L_bad/H_bad levels
+        4. Rejected signal markers (small gray ◯) - at candle close
+        5. Accepted signal markers (large blue/red ▲/▼) - at candle close
+        """
+        
+        # Convert to display timezone
+        candles_display = self._prepare_display_df(candles)
+        accepted_display = self._prepare_display_signals(accepted_signals) if not accepted_signals.empty else pd.DataFrame()
+        rejected_display = self._prepare_display_signals(rejected_signals) if not rejected_signals.empty else pd.DataFrame()
+        bad_display = self._prepare_display_signals(bad_signals) if bad_signals is not None and not bad_signals.empty else None
+        
+        # Create SINGLE-PANEL plot
+        fig = make_subplots(
+            rows=1,
+            cols=1,
+            subplot_titles=[f"{instrument} - {candles.attrs.get('timeframe', 'H1')} (Filter Results)"]
+        )
+        
+        # Main candlestick chart WITH STRONG CANDLE ARROWS (auto-detected)
+        self._add_candlestick_trace(
+            fig, candles_display, row=1, col=1,
+            indicators={},
+            instrument=instrument
+        )
+        
+        # Add BAD SIGNAL markers ('x' at reference levels)
+        if bad_display is not None and not bad_display.empty:
+            pip_size = get_pip_size(instrument)
+            y_offset = 2.0 * pip_size
+            
+            # Red 'x' at CANDLE LOW for bad SELL signals
+            bad_sells = bad_display[bad_display['direction'] < 0]
+            if not bad_sells.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=bad_sells.index,
+                        y=bad_sells['price'] - y_offset,
+                        mode='markers',
+                        name='Bad SELL Reference',
+                        marker=dict(symbol='x', size=18, color='red', line=dict(width=2.5, color='darkred')),
+                        text=['✗'] * len(bad_sells),
+                        textposition='bottom center',
+                        textfont=dict(size=24, color='red'),
+                        hovertemplate=(
+                            '<b>Bad SELL Reference</b><br>'
+                            'Time: %{x}<br>'
+                            'Candle Low: %{y:.5f}<br>'
+                            '<span style="color:gray">Filter reference level</span><extra></extra>'
+                        )
+                    ),
+                    row=1, col=1
+                )
+            
+            # Blue 'x' at CANDLE HIGH for bad BUY signals
+            bad_buys = bad_display[bad_display['direction'] > 0]
+            if not bad_buys.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=bad_buys.index,
+                        y=bad_buys['price'] + y_offset,
+                        mode='markers',
+                        name='Bad BUY Reference',
+                        marker=dict(symbol='x', size=18, color='blue', line=dict(width=2.5, color='darkblue')),
+                        text=['✗'] * len(bad_buys),
+                        textposition='top center',
+                        textfont=dict(size=24, color='blue'),
+                        hovertemplate=(
+                            '<b>Bad BUY Reference</b><br>'
+                            'Time: %{x}<br>'
+                            'Candle High: %{y:.5f}<br>'
+                            '<span style="color:gray">Filter reference level</span><extra></extra>'
+                        )
+                    ),
+                    row=1, col=1
+                )
+        
+        # REPLACE the rejected signal section with this enhanced implementation:
+        if not rejected_display.empty:
+            pip_size = get_pip_size(instrument)
+            y_offset = 4.5 * pip_size  # Increased offset to avoid marker overlap
+            
+            # Split rejected signals by direction for distinct styling
+            rejected_buys = rejected_display[rejected_display['direction'] > 0]
+            rejected_sells = rejected_display[rejected_display['direction'] < 0]
+            
+            # ════════════════════════════════════════════════════════════════════
+            # REJECTED BUY SIGNALS: Orange downward arrow ABOVE candle
+            # (Points down to indicate "rejected long entry")
+            # ════════════════════════════════════════════════════════════════════
+            if not rejected_buys.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=rejected_buys.index,
+                        y=rejected_buys['price'] + y_offset,
+                        mode='markers',
+                        name='Rejected BUY',
+                        marker=dict(
+                            symbol='arrow-bar-down',  # Long downward arrow with base bar
+                            size=22,                  # Larger than accepted signals
+                            color='orange',           # Distinct orange for rejected buys
+                            line=dict(width=2.5, color='darkorange'),
+                            opacity=1.0
+                        ),
+                        hovertemplate=(
+                            '<b style="color:orange">❌ REJECTED BUY</b><br>'
+                            '<b>Time:</b> %{x}<br>'
+                            '<b>Price:</b> %{y:.5f}<br>'
+                            '<b>Body:</b> %{customdata[0]:.1f} pips<br>'
+                            '<span style="color:gray">Failed acceptance filter</span><extra></extra>'
+                        ),
+                        customdata=np.column_stack([rejected_buys['body_pips'].values])
+                    ),
+                    row=1, col=1
+                )
+            
+            # ════════════════════════════════════════════════════════════════════
+            # REJECTED SELL SIGNALS: Purple upward arrow BELOW candle
+            # (Points up to indicate "rejected short entry")
+            # ════════════════════════════════════════════════════════════════════
+            if not rejected_sells.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=rejected_sells.index,
+                        y=rejected_sells['price'] - y_offset,
+                        mode='markers',
+                        name='Rejected SELL',
+                        marker=dict(
+                            symbol='arrow-bar-up',    # Long upward arrow with base bar
+                            size=22,                  # Larger than accepted signals
+                            color='purple',           # Distinct purple for rejected sells
+                            line=dict(width=2.5, color='darkviolet'),
+                            opacity=1.0
+                        ),
+                        hovertemplate=(
+                            '<b style="color:purple">❌ REJECTED SELL</b><br>'
+                            '<b>Time:</b> %{x}<br>'
+                            '<b>Price:</b> %{y:.5f}<br>'
+                            '<b>Body:</b> %{customdata[0]:.1f} pips<br>'
+                            '<span style="color:gray">Failed acceptance filter</span><extra></extra>'
+                        ),
+                        customdata=np.column_stack([rejected_sells['body_pips'].values])
+                    ),
+                    row=1, col=1
+                )
+        
+        # Add ACCEPTED SIGNALS (large triangles with border)
+        if not accepted_display.empty:
+            pip_size = get_pip_size(instrument)
+            y_offset = 3.5 * pip_size
+            
+            # Large blue triangles for accepted BUYs
+            accepted_buys = accepted_display[accepted_display['direction'] > 0]
+            if not accepted_buys.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=accepted_buys.index,
+                        y=accepted_buys['price'] + y_offset,
+                        mode='markers',
+                        name='Accepted BUY',
+                        marker=dict(
+                            symbol='triangle-up',
+                            size=20,
+                            color='blue',
+                            line=dict(width=3, color='white')
+                        ),
+                        hovertemplate=(
+                            '<b>✅ ACCEPTED BUY</b><br>'
+                            'Time: %{x}<br>'
+                            'Price: %{y:.5f}<br>'
+                            'Body: %{customdata[0]:.1f} pips<br>'
+                            '<span style="color:green">Passed bad signal filter</span><extra></extra>'
+                        ),
+                        customdata=np.column_stack([accepted_buys['body_pips'].values])
+                    ),
+                    row=1, col=1
+                )
+            
+            # Large red triangles for accepted SELLs
+            accepted_sells = accepted_display[accepted_display['direction'] < 0]
+            if not accepted_sells.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=accepted_sells.index,
+                        y=accepted_sells['price'] - y_offset,
+                        mode='markers',
+                        name='Accepted SELL',
+                        marker=dict(
+                            symbol='triangle-down',
+                            size=20,
+                            color='red',
+                            line=dict(width=3, color='white')
+                        ),
+                        hovertemplate=(
+                            '<b>✅ ACCEPTED SELL</b><br>'
+                            'Time: %{x}<br>'
+                            'Price: %{y:.5f}<br>'
+                            'Body: %{customdata[0]:.1f} pips<br>'
+                            '<span style="color:green">Passed bad signal filter</span><extra></extra>'
+                        ),
+                        customdata=np.column_stack([accepted_sells['body_pips'].values])
+                    ),
+                    row=1, col=1
+                )
+
+
+        # Optimized layout
+        tz_label = f" ({self.display_timezone})" if self.display_timezone != "UTC" else ""
+        fig.update_layout(
+            title=f"{instrument} Refined Strategy V3{tz_label} {title_suffix}",
+            height=height,
+            width=width,
+            template="plotly_white" if self.theme == "light" else "plotly_dark",
+            hovermode="x unified",
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            plot_bgcolor=self.color_scheme["bg"],
+            paper_bgcolor=self.color_scheme["bg"],
+            font=dict(color=self.color_scheme["text"]),
+            margin=dict(t=80, b=60, l=60, r=60)
+        )
+
+
+        # CRITICAL FIX: Eliminate EXACT 48-hour weekend gap (Friday 17:00 EST → Sunday 17:00 EST)
+        # Winter (EST = UTC-5): Friday 22:00 UTC → Sunday 22:00 UTC
+        # Summer (EDT = UTC-4): Friday 21:00 UTC → Sunday 21:00 UTC
+        # Using winter bounds (22:00 UTC) works year-round (over-hides 1 hour in summer, but that hour is non-trading)
+        # fig.update_xaxes(
+        #     rangebreaks=[
+        #         dict(bounds=[22, 24], pattern="day of week"),  # Hide Friday 22:00-24:00 UTC
+        #         dict(bounds=[0, 22], pattern="day of week")    # Hide Saturday + Sunday 00:00-22:00 UTC
+        #     ],
+        #     row=1, col=1
+        # )
+
+        # Grid lines with timezone label
+        fig.update_xaxes(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor=self.color_scheme["grid"],
+            title_text=f"Time{tz_label}",
+            rangeslider_visible=False,
+            row=1, col=1
+        )
+        fig.update_yaxes(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor=self.color_scheme["grid"],
+            row=1, col=1
+        )
+        
+        return fig
+
+

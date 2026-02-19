@@ -1,0 +1,12 @@
+2026-02-19 12:22:58 | INFO     | scripts.strategy_strong_candle_close_refined | Initializing strategy...
+2026-02-19 12:22:58 | INFO     | scripts.strategy_strong_candle_close_refined | Running analysis...
+2026-02-19 12:23:21 | INFO     | scripts.strategy_strong_candle_close_refined | 
+======================================================================
+2026-02-19 12:23:21 | INFO     | scripts.strategy_strong_candle_close_refined | ANALYSIS COMPLETE
+2026-02-19 12:23:21 | INFO     | scripts.strategy_strong_candle_close_refined | ======================================================================
+2026-02-19 12:23:21 | INFO     | scripts.strategy_strong_candle_close_refined | Strong candles: 2,576
+2026-02-19 12:23:21 | INFO     | scripts.strategy_strong_candle_close_refined | Bad signals:    1,291
+2026-02-19 12:23:21 | INFO     | scripts.strategy_strong_candle_close_refined | Accepted:       1,771
+2026-02-19 12:23:21 | INFO     | scripts.strategy_strong_candle_close_refined | Rejected:       805
+2026-02-19 12:23:21 | INFO     | scripts.strategy_strong_candle_close_refined | 
+✅ Plot saved to: C:\Users\alvin\Desktop\Project Forex 2026 Jan6\trading_system\data\output\strategy_refined\EUR_USD_H1_refined.html

@@ -1,0 +1,12 @@
+2026-02-19 12:14:49 | INFO     | core.logger | Initializing strategy...
+2026-02-19 12:14:49 | INFO     | core.logger | Running analysis...
+2026-02-19 12:15:12 | INFO     | core.logger | 
+======================================================================
+2026-02-19 12:15:12 | INFO     | core.logger | ANALYSIS COMPLETE
+2026-02-19 12:15:12 | INFO     | core.logger | ======================================================================
+2026-02-19 12:15:12 | INFO     | core.logger | Strong candles: 2,576
+2026-02-19 12:15:12 | INFO     | core.logger | Bad signals:    1,291
+2026-02-19 12:15:12 | INFO     | core.logger | Accepted:       1,771
+2026-02-19 12:15:12 | INFO     | core.logger | Rejected:       805
+2026-02-19 12:15:12 | INFO     | core.logger | 
+✅ Plot saved to: C:\Users\alvin\Desktop\Project Forex 2026 Jan6\trading_system\data\output\strategy_refined\EUR_USD_H1_refined.html

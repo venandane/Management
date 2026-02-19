@@ -3,7 +3,7 @@ Strategy registry for dynamic instantiation from config.
 """
 from typing import Dict, Type
 from trading_system.strategies.base import StrategyBase
-from trading_system.strategies.breakout_on_strong_candle import BreakoutOnStrongCandleStrategy
+from trading_system.strategies.strong_candle_close_refined import StrongCandleCloseRefinedStrategy
 import importlib
 
 class StrategyRegistry:
@@ -38,4 +38,4 @@ class StrategyRegistry:
 
 
 # Register built-in strategies
-StrategyRegistry.register("BREAKOUT_ON_STRONG_CANDLE")(BreakoutOnStrongCandleStrategy)
+StrategyRegistry.register("STRONG_CANDLE_CLOSE_REFINED")(StrongCandleCloseRefinedStrategy)
